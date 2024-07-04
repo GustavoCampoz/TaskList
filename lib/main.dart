@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'database_helper.dart';
 
 void main() {
   runApp(const MyApp());
@@ -33,16 +34,26 @@ class _TaskPageState extends State<TaskPage> {
   final TextEditingController _dateController = TextEditingController();
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
+  final DatabaseHelper _dbHelper = DatabaseHelper();
 
   @override
   void initState() {
     super.initState();
     tz.initializeTimeZones();
-    var initializationSettingsAndroid = AndroidInitializationSettings('app_icon');
+    var initializationSettingsAndroid =
+        const AndroidInitializationSettings('@mipmap/ic_launcher');
     var initSetttings = InitializationSettings(
       android: initializationSettingsAndroid,
     );
     flutterLocalNotificationsPlugin.initialize(initSetttings);
+    _loadTasks();
+  }
+
+  Future<void> _loadTasks() async {
+    List<Map<String, dynamic>> tasksFromDb = await _dbHelper.getTasks();
+    setState(() {
+      tasks = tasksFromDb;
+    });
   }
 
   void _addTask() {
@@ -55,11 +66,13 @@ class _TaskPageState extends State<TaskPage> {
             children: [
               TextField(
                 controller: _taskController,
-                decoration: const InputDecoration(labelText: 'Task Description'),
+                decoration:
+                    const InputDecoration(labelText: 'Task Description'),
               ),
               TextField(
                 controller: _dateController,
-                decoration: const InputDecoration(labelText: 'Task Date and Time'),
+                decoration:
+                    const InputDecoration(labelText: 'Task Date and Time'),
                 onTap: () async {
                   DateTime? picked = await showDatePicker(
                       context: context,
@@ -79,21 +92,33 @@ class _TaskPageState extends State<TaskPage> {
                         time.hour,
                         time.minute,
                       );
-                      _dateController.text = DateFormat('yyyy-MM-dd HH:mm').format(finalDateTime);
+                      _dateController.text =
+                          DateFormat('yyyy-MM-dd HH:mm').format(finalDateTime);
                       scheduleNotification(finalDateTime, _taskController.text);
                     }
                   }
                 },
               ),
               ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    tasks.add({
+                onPressed: () async {
+                  if (_taskController.text.isNotEmpty &&
+                      _dateController.text.isNotEmpty) {
+                    Map<String, dynamic> newTask = {
                       'description': _taskController.text,
                       'date': _dateController.text,
-                    });
-                    Navigator.pop(context);
-                  });
+                    };
+                    await _dbHelper.insertTask(newTask);
+                    _taskController.clear();
+                    _dateController.clear();
+                    _loadTasks();
+                    Navigator.pop(
+                        context); // Voltar para a tela inicial após adicionar a tarefa
+                  } else {
+                    // Mostre uma mensagem de erro se os campos estiverem vazios
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Preencha todos os campos')),
+                    );
+                  }
                 },
                 child: const Text('Add Task'),
               ),
@@ -104,8 +129,9 @@ class _TaskPageState extends State<TaskPage> {
     }));
   }
 
-  Future<void> scheduleNotification(DateTime dateTime, String taskDescription) async {
-    var androidDetails = AndroidNotificationDetails(
+  Future<void> scheduleNotification(
+      DateTime dateTime, String taskDescription) async {
+    var androidDetails = const AndroidNotificationDetails(
       'channelId',
       'channelName',
       importance: Importance.max,
@@ -127,6 +153,34 @@ class _TaskPageState extends State<TaskPage> {
     );
   }
 
+  void _showTaskDetails(Map<String, dynamic> task, int index) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(task['description']),
+          content: Text('Date and Time: ${task['date']}'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Close'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await _dbHelper.deleteTask(task['id']);
+                _loadTasks();
+                Navigator.of(context).pop();
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -137,6 +191,7 @@ class _TaskPageState extends State<TaskPage> {
           return ListTile(
             title: Text(tasks[index]['description']),
             subtitle: Text(tasks[index]['date']),
+            onTap: () => _showTaskDetails(tasks[index], index),
           );
         },
       ),
